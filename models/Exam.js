@@ -1,3 +1,4 @@
+// server/src/models/Exam.js
 const mongoose = require("mongoose");
 
 const questionSchema = new mongoose.Schema({
@@ -35,6 +36,12 @@ const examSchema = new mongoose.Schema({
     required: true,
   },
   questions: [questionSchema],
+
+  // IMPORTANT: Add "status" for draft/launched/disabled
+  status: {
+    type: String,
+    default: "draft", // newly created exam is in "draft" by default
+  },
 });
 
 module.exports = mongoose.model("Exam", examSchema);

@@ -1,11 +1,13 @@
+// server/src/routes/examRoutes.js
 const express = require("express");
 const router = express.Router();
 const Exam = require("../models/Exam");
 
-// 1) Create exam
+// CREATE exam
 router.post("/", async (req, res) => {
   try {
-    // The body should contain { moduleName, moduleCode, year, semester, questions: [...] }
+    // The body should contain { moduleName, moduleCode, year, semester, questions: [...], etc. }
+    // "status" will default to "draft" if not provided
     const newExam = await Exam.create(req.body);
     res.status(201).json(newExam);
   } catch (err) {
@@ -14,11 +16,11 @@ router.post("/", async (req, res) => {
   }
 });
 
-// 2) Get all exams
+// GET all exams
 router.get("/", async (req, res) => {
   try {
-    // Later you might filter by lecturer ID or something
-    const exams = await Exam.find().sort({ _id: -1 }); // newest first
+    // Return all exams (draft, launched, disabled)
+    const exams = await Exam.find().sort({ _id: -1 });
     res.json(exams);
   } catch (err) {
     console.error("Error fetching exams:", err);
@@ -26,7 +28,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-// server/src/routes/examRoutes.js (excerpt)
+// GET single exam
 router.get("/:id", async (req, res) => {
   try {
     const exam = await Exam.findById(req.params.id);
@@ -38,9 +40,9 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// UPDATE exam
 router.put("/:id", async (req, res) => {
   try {
-    // req.body should have moduleName, moduleCode, year, semester, questions array
     const updated = await Exam.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
     });
@@ -52,7 +54,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// examRoutes.js (already shown, but make sure it’s real):
+// DELETE exam
 router.delete("/:id", async (req, res) => {
   try {
     const exam = await Exam.findByIdAndDelete(req.params.id);
@@ -64,5 +66,47 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-// Export the router
+// LAUNCH exam (sets status="launched")
+router.post("/:id/launch", async (req, res) => {
+  try {
+    const exam = await Exam.findByIdAndUpdate(
+      req.params.id,
+      { status: "launched" },
+      { new: true }
+    );
+    if (!exam) return res.status(404).json({ error: "Exam not found" });
+    res.json(exam);
+  } catch (err) {
+    console.error("Error launching exam:", err);
+    res.status(500).json({ error: "Failed to launch exam" });
+  }
+});
+
+// DISABLE exam (sets status="disabled")
+router.post("/:id/disable", async (req, res) => {
+  try {
+    const exam = await Exam.findByIdAndUpdate(
+      req.params.id,
+      { status: "disabled" },
+      { new: true }
+    );
+    if (!exam) return res.status(404).json({ error: "Exam not found" });
+    res.json(exam);
+  } catch (err) {
+    console.error("Error disabling exam:", err);
+    res.status(500).json({ error: "Failed to disable exam" });
+  }
+});
+
+// (Optional) GET launched exams only
+router.get("/launched", async (req, res) => {
+  try {
+    const launchedExams = await Exam.find({ status: "launched" });
+    res.json(launchedExams);
+  } catch (err) {
+    console.error("Error fetching launched exams:", err);
+    res.status(500).json({ error: "Failed to fetch launched exams" });
+  }
+});
+
 module.exports = router;
