@@ -249,7 +249,7 @@ router.put("/:subId", async (req, res) => {
 });
 
 // Endpoint to generate and download PDF for a submission
-//Generate and download PDF for a submission
+//Generate and download PDF for a submissions
 router.get("/:subId/pdf", async (req, res) => {
   try {
     const submission = await Submission.findById(req.params.subId).populate(
