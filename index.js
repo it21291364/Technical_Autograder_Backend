@@ -4,6 +4,7 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 
 const examRoutes = require("./routes/examRoutes"); // We'll create this soon
+const submissionRoutes = require("./routes/submissionRoutes");
 
 const app = express();
 
@@ -27,6 +28,7 @@ app.get("/", (req, res) => {
 
 // 4) Use exam routes
 app.use("/api/exams", examRoutes);
+app.use("/api/submissions", submissionRoutes);
 
 // 5) Start server
 const port = process.env.PORT || 4000;
