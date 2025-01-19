@@ -5,8 +5,9 @@ const Exam = require("../models/Exam");
 const OpenAI = require("openai");
 const PDFDocument = require("pdfkit"); // For PDF generation
 
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
 async function gradeSubmission(submission, exam) {
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   let totalMarks = 0;
 
   for (let answerObj of submission.answers) {
@@ -16,6 +17,7 @@ async function gradeSubmission(submission, exam) {
     );
     if (!questionObj) continue;
 
+    // If exam instructions literally say "give full marks," do so immediately:
     const instructionLower = (questionObj.instructions || "").toLowerCase();
     if (instructionLower.includes("give full marks")) {
       answerObj.marks = questionObj.marks;
@@ -24,35 +26,46 @@ async function gradeSubmission(submission, exam) {
       continue;
     }
 
-    // Construct prompt for OpenAI using similar structure as provided
+    /**
+     * Construct a stronger prompt that:
+     * 1. Emphasizes "DO NOT reduce marks for grammar/spelling."
+     * 2. Demonstrates an example awarding full marks despite spelling errors.
+     */
     const prompt = `
 You are an educational assistant that strictly follows the instructions provided in the marking guide when grading student answers.
 
 **Important Instructions (Highest Priority):**
-- ${questionObj.instructions || ""}
+1. DO NOT deduct any marks for spelling or grammar mistakes under any circumstances.
+2. The only criteria for awarding marks is the correctness and completeness of the content relative to the marking guide.
+3. Compare the student's answer with the expected answer. The student's phrasing does NOT need to match word-for-word; they only need to convey the correct main idea. Award 0 marks only if the student’s answer is conceptually incorrect or does not address the question at all.
 
-**Note:**
-- Always prioritize the marking guide instructions above all else.
-- Compare the student's answer with the expected answer.
-- Award 0 marks if the answer does not address the question.
+**Few-Shot Example Demonstrating No Grammar Penalty:**
 
-**Question Details:**
+Example:
+  Question: "What is a computer?"
+  Allocated Marks: 10
+  Expected Answer: "A computer is an electronic machine that stores and processes data..."
+  Student's Answer: "A cmoputer is an eletronic mashine that stoers data..."
+  
+  - Even though the student's answer has multiple spelling mistakes, the conceptual content matches the expected answer.
+  - Marks Awarded: 10
+  - Feedback: "Concept is correct; ignoring spelling mistakes as per instructions."
+
+**Question Details for Current Answer:**
 - **Question**: ${questionObj.question}
 - **Expected Answer**: ${questionObj.expected || ""}
 - **Allocated Marks**: ${questionObj.marks}
 
-**Student's Answer:**
+**Exam-Specific Instructions**:
+${questionObj.instructions || "(No specific instructions provided)"}
+
+**Student's Answer**:
 ${answerObj.answer}
 
-**Guidelines (Secondary Priority):**
-- Ignore spelling and grammar mistakes.
-- Focus on content and accuracy.
-- Provide constructive feedback.
-
-**Response Format:**
+**Required Response Format (in JSON)**:
 {
   "Marks Awarded": <number between 0 and ${questionObj.marks}>,
-  "Feedback": "<feedback text>"
+  "Feedback": "<concise text feedback, but no mark deduction for grammar>"
 }
     `;
 
@@ -70,12 +83,14 @@ ${answerObj.answer}
 
       try {
         const jsonResponse = JSON.parse(output);
-        studentMarks = jsonResponse["Marks Awarded"] || 0;
+        // Ensure "Marks Awarded" is treated as a number
+        studentMarks = Number(jsonResponse["Marks Awarded"]) || 0;
         feedback = jsonResponse["Feedback"] || "No feedback provided";
       } catch (error) {
-        console.error("Failed to parse OpenAI response:", error);
+        console.error("Failed to parse OpenAI response as JSON:", error);
       }
 
+      // Accumulate the student's total marks as a number
       answerObj.marks = studentMarks;
       answerObj.feedback = feedback;
       totalMarks += studentMarks;
