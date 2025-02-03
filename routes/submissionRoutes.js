@@ -11,13 +11,13 @@ async function gradeSubmission(submission, exam) {
   let totalMarks = 0;
 
   for (let answerObj of submission.answers) {
-    // Match the question from the exam
+    // 1) Find matching question in the exam
     const questionObj = exam.questions.find(
       (q) => q.question === answerObj.question
     );
     if (!questionObj) continue;
 
-    // If exam instructions literally say "give full marks," do so immediately:
+    // 2) If exam instructions say "give full marks," skip GPT logic
     const instructionLower = (questionObj.instructions || "").toLowerCase();
     if (instructionLower.includes("give full marks")) {
       answerObj.marks = questionObj.marks;
@@ -26,35 +26,33 @@ async function gradeSubmission(submission, exam) {
       continue;
     }
 
-    /**
-     * Construct a stronger prompt that:
-     * 1. Emphasizes "DO NOT reduce marks for grammar/spelling."
-     * 2. Demonstrates an example awarding full marks despite spelling errors.
-     */
-    const prompt = `
-You are an educational assistant that strictly follows the instructions provided in the marking guide when grading student answers.
+    // ---------------------------
+    //  FIRST CALL: FINE-TUNED GPT
+    // ---------------------------
+    // For awarding marks only
+    const markingPrompt = `
+You are an educational assistant that strictly follows the instructions provided in the marking guide.
 
 **Important Instructions (Highest Priority):**
 1. DO NOT deduct any marks for spelling or grammar mistakes under any circumstances.
 2. The only criteria for awarding marks is the correctness and completeness of the content relative to the marking guide.
 3. Compare the student's answer with the expected answer. The student's phrasing does NOT need to match word-for-word; they only need to convey the correct main idea. Award 0 marks only if the student’s answer is conceptually incorrect or does not address the question at all.
+4. Partial marks can be awarded as decimals (e.g., 1.5 or 3.75).
 
-**Few-Shot Example Demonstrating No Grammar Penalty:**
-
+**Few-Shot Example Demonstrating Partial Marks**:
 Example:
-  Question: "What is a computer?"
-  Allocated Marks: 10
-  Expected Answer: "A computer is an electronic machine that stores and processes data..."
-  Student's Answer: "A cmoputer is an eletronic mashine that stoers data..."
-  
-  - Even though the student's answer has multiple spelling mistakes, the conceptual content matches the expected answer.
-  - Marks Awarded: 10
-  - Feedback: "Concept is correct; ignoring spelling mistakes as per instructions."
+  Question: "Explain what a variable is."
+  Allocated Marks: 5
+  Expected Answer: "A variable is a symbolic name associated with a value..."
+  Student's Answer: "A variable stores different values..."
+
+  - Student's answer is partially correct but lacks detail on usage.
+  - Marks Awarded: 3.5
 
 **Question Details for Current Answer:**
-- **Question**: ${questionObj.question}
-- **Expected Answer**: ${questionObj.expected || ""}
-- **Allocated Marks**: ${questionObj.marks}
+- Question: ${questionObj.question}
+- Expected Answer: ${questionObj.expected || ""}
+- Allocated Marks: ${questionObj.marks}
 
 **Exam-Specific Instructions**:
 ${questionObj.instructions || "(No specific instructions provided)"}
@@ -62,45 +60,78 @@ ${questionObj.instructions || "(No specific instructions provided)"}
 **Student's Answer**:
 ${answerObj.answer}
 
-**Required Response Format (in JSON)**:
+**Required Response Format (JSON)**:
 {
-  "Marks Awarded": <number between 0 and ${questionObj.marks}>,
-  "Feedback": "<concise text feedback, but no mark deduction for grammar>"
+  "Marks Awarded": <number between 0 and ${questionObj.marks}>
 }
     `;
 
+    let studentMarks = 0;
     try {
-      const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 500,
+      const responseMarking = await openai.chat.completions.create({
+        model: "ft:gpt-3.5-turbo-0125:personal:genaiautograderv1:AwStpEZl", // <-- Your fine-tuned model
+        messages: [{ role: "user", content: markingPrompt }],
+        max_tokens: 250,
         temperature: 0,
       });
 
-      const output = response.choices[0].message.content.trim();
-      let studentMarks = 0;
-      let feedback = "No feedback provided";
-
+      const markingOutput = responseMarking.choices[0].message.content.trim();
       try {
-        const jsonResponse = JSON.parse(output);
-        // Ensure "Marks Awarded" is treated as a number
+        // Parse out the "Marks Awarded"
+        const jsonResponse = JSON.parse(markingOutput);
         studentMarks = Number(jsonResponse["Marks Awarded"]) || 0;
-        feedback = jsonResponse["Feedback"] || "No feedback provided";
-      } catch (error) {
-        console.error("Failed to parse OpenAI response as JSON:", error);
+      } catch (err) {
+        console.error("Error parsing marking JSON:", err);
       }
-
-      // Accumulate the student's total marks as a number
-      answerObj.marks = studentMarks;
-      answerObj.feedback = feedback;
-      totalMarks += studentMarks;
-    } catch (error) {
-      console.error("Error during OpenAI grading:", error);
+    } catch (err) {
+      console.error("Error during fine-tuned GPT call for marks:", err);
     }
+
+    // ---------------------------
+    //  SECOND CALL: STANDARD GPT
+    // ---------------------------
+    // For generating feedback text
+ const feedbackPrompt = `
+You are a teaching assistant providing a thorough justification for the awarded marks.
+
+Please give a detailed explanation (1 paragraph) of how the student's answer aligns or misaligns with the expected answer, clarifying the reasoning behind awarding ${studentMarks} out of ${questionObj.marks} marks. 
+
+- Include references to key points from the expected answer that the student included or missed.
+- If the student lost marks, explain why (but do not penalize grammar/spelling).
+- If the student earned marks, explain which parts of their answer were correct or partially correct.
+- Keep the writing style concise but sufficiently detailed to show clear reasoning.
+  
+Question: ${questionObj.question}
+Expected Answer: ${questionObj.expected || "No expected answer provided"}
+Allocated Marks: ${questionObj.marks}
+Student's Answer: ${answerObj.answer}
+Marks Awarded: ${studentMarks} out of ${questionObj.marks}
+`;
+
+    let generatedFeedback = "No feedback provided";
+    try {
+      const responseFeedback = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo", // <-- Another model for feedback
+        messages: [{ role: "user", content: feedbackPrompt }],
+        max_tokens: 150,
+        temperature: 0.7,
+      });
+
+      generatedFeedback = responseFeedback.choices[0].message.content.trim();
+    } catch (err) {
+      console.error("Error during GPT call for feedback:", err);
+    }
+
+    // 3) Store final marks + feedback
+    answerObj.marks = studentMarks;
+    answerObj.feedback = generatedFeedback;
+    totalMarks += studentMarks;
   }
 
+  // 4) Update the submission-level total
   submission.totalMarks = totalMarks;
 }
+
 
 router.post("/", async (req, res) => {
   try {
