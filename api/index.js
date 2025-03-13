@@ -2,15 +2,28 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 
-const examRoutes = require("./routes/examRoutes"); // We'll create this soon
-const submissionRoutes = require("./routes/submissionRoutes");
+const examRoutes = require("../src/routes/examRoutes"); // We'll create this soon
+const submissionRoutes = require("../src/routes/submissionRoutes");
 
 const app = express();
 
 // 1) Use Middlewares
-app.use(cors()); // so our React front-end (localhost:5173) can talk to this server
 app.use(express.json()); // parse JSON bodies
+app.use(cors({
+  origin: "https://autograder-client.vercel.app", // Allow frontend URL
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true
+}));
+app.use(helmet());
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // Limit each IP to 100 requests per windowMs
+});
+app.use(limiter);
 
 // 2) Connect to MongoDB
 mongoose
